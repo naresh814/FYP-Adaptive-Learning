@@ -1,136 +1,65 @@
 import cv2
-import csv
-import os
-import time
-from datetime import datetime
-from deepface import DeepFace
+import mediapipe as mp
 
-# CSV file name
-csv_file = "engagement_data.csv"
+from tensorflow.keras.models import load_model
 
-# Create CSV file if it doesn't exist
-if not os.path.exists(csv_file):
-    with open(csv_file, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            "child_id",
-            "timestamp",
-            "engagement",
-            "face_detected",
-            "emotion"
-        ])
+model =  load_model("emotion_model.h5")
 
-# Function to save engagement
-def save_engagement(child_id, engagement, face_detected, emotion):
+# Initialize MediaPipe
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh()
 
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# Start webcam
+cap = cv2.VideoCapture(1)
 
-    with open(csv_file, mode='a', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            child_id,
-            timestamp,
-            engagement,
-            face_detected,
-            emotion
-        ])
+if not cap.isOpened():
+    print("Camera not detected")
+    exit()
 
+attention_score = 100
 
-# ✅ MAIN TRACKING FUNCTION (IMPORTANT)
-def start_tracking():
+while True:
 
-    face_cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-    )
+    ret, frame = cap.read()
 
-    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+    if not ret:
+        print("Failed to capture frame")
+        break
 
-    child_id = 1
-    last_saved_time = 0
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    save_interval = 3  # seconds
+    results = face_mesh.process(rgb)
 
-    while True:
+    status = "Not Detected"
 
-        ret, frame = cap.read()
+    if results.multi_face_landmarks:
 
-        if not ret:
-            break
+        status = "Focused"
 
-        # Detect emotion
-        result = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False)
-        emotion = result[0]['dominant_emotion']
+        for face_landmarks in results.multi_face_landmarks:
 
-        # Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            for lm in face_landmarks.landmark:
 
-        # Detect faces
-        faces = face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.3,
-            minNeighbors=5
-        )
+                h, w, c = frame.shape
+                x = int(lm.x * w)
+                y = int(lm.y * h)
 
-        # Determine face_detected
-        if len(faces) > 0:
-            face_detected = "yes"
-        else:
-            face_detected = "no"
+                cv2.circle(frame, (x, y), 1, (0,255,0), -1)
 
-        # Determine engagement
-        if face_detected == "yes" and emotion in ["happy", "neutral"]:
-            engagement = "engaged"
-        else:
-            engagement = "disengaged"
+    else:
+        attention_score -= 1
+        status = "Distracted"
 
-        # Draw face rectangles
-        for (x, y, w, h) in faces:
-            cv2.rectangle(frame,
-                          (x, y),
-                          (x+w, y+h),
-                          (0, 255, 0),
-                          2)
+    cv2.putText(frame, f"Attention Score: {attention_score}", (20,40),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
 
-        # Save data every few seconds
-        current_time = time.time()
+    cv2.putText(frame, f"Status: {status}", (20,80),
+                cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
 
-        if current_time - last_saved_time > save_interval:
+    cv2.imshow("Attention Tracker", frame)
 
-            save_engagement(
-                child_id,
-                engagement,
-                face_detected,
-                emotion
-            )
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
 
-            print("Saved:", engagement, "| Face:", face_detected, "| Emotion:", emotion)
-
-            last_saved_time = current_time
-
-        # Show emotion text
-        cv2.putText(frame,
-                    f"Emotion: {emotion}",
-                    (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (0,255,0),
-                    2)
-
-        # Show engagement text
-        cv2.putText(frame,
-                    f"Engagement: {engagement}",
-                    (10, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (255,0,0),
-                    2)
-
-        # Show webcam
-        cv2.imshow("Engagement Tracker", frame)
-
-        # Exit on ESC key
-        if cv2.waitKey(1) == 27:
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
+cap.release()
+cv2.destroyAllWindows()
